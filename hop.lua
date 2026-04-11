@@ -10,11 +10,15 @@ local BLUE_LOCK_ID="18668065416"
 
 local SERVERS_URL="https://raw.githubusercontent.com/Shuzinho/farm-system/main/servers.json"
 local ACCOUNTS_URL="https://raw.githubusercontent.com/Shuzinho/farm-system/main/accounts.json"
+local PRIORITY_URL="https://raw.githubusercontent.com/Shuzinho/farm-system/main/accounts_priority.json"
 
 local USED_FILE="used_servers.json"
 local STATE_FILE="hop_state.json"
 local PROTECT=180
 
+-- =========================
+-- FILE SYSTEM
+-- =========================
 local function fexists(n)
     local ok=pcall(function() return readfile(n) end)
     return ok
@@ -36,52 +40,102 @@ local function jsave(n,d)
     end
 end
 
+-- =========================
+-- LOAD REMOTE DATA
+-- =========================
 local function loadServers()
     local ok,r=pcall(function() return game:HttpGet(SERVERS_URL) end)
-    if not ok then return nil end
+    if not ok then
+        warn("Erro ao carregar servers.json")
+        return nil
+    end
+
     local ok2,d=pcall(function() return H:JSONDecode(r) end)
-    if not ok2 then return nil end
+    if not ok2 then
+        warn("JSON inválido em servers.json")
+        return nil
+    end
+
     return d
 end
 
 local function loadAccounts()
     local ok,r=pcall(function() return game:HttpGet(ACCOUNTS_URL) end)
-    if not ok then return {} end
+    if not ok then
+        warn("Erro ao carregar accounts.json")
+        return {}
+    end
+
     local ok2,d=pcall(function() return H:JSONDecode(r) end)
-    if not ok2 then return {} end
+    if not ok2 then
+        warn("JSON inválido em accounts.json")
+        return {}
+    end
+
     return d
 end
 
+local function loadPriority()
+    local ok,r=pcall(function() return game:HttpGet(PRIORITY_URL) end)
+    if not ok then
+        warn("Erro ao carregar accounts_priority.json")
+        return {}
+    end
+
+    local ok2,d=pcall(function() return H:JSONDecode(r) end)
+    if not ok2 then
+        warn("JSON inválido em accounts_priority.json")
+        return {}
+    end
+
+    return d
+end
+
+-- =========================
+-- ANTI LOOP
+-- =========================
 local function justHoppedHere()
     local s=jload(STATE_FILE)
+
     if not s.last_target_jobid then return false end
     if s.last_target_jobid~=JID then return false end
     if not s.last_hop_time then return false end
+
     return (os.time()-s.last_hop_time)<=PROTECT
 end
 
+-- =========================
+-- SERVER CHOICE
+-- =========================
 local function isUsed(id, used)
     for _,x in ipairs(used) do
-        if x==id then return true end
+        if x==id then
+            return true
+        end
     end
     return false
 end
 
 local function getServer()
     local all=loadServers()
-    if not all or not all[PID] then return nil end
+    if not all or not all[PID] then
+        return nil
+    end
 
     local list=all[PID]
     local usedData=jload(USED_FILE)
     local used=usedData[PID] or {}
 
-    if #list==0 then return nil end
+    if #list==0 then
+        return nil
+    end
 
     local start=(P.UserId % #list)+1
 
     for i=0,#list-1 do
         local idx=((start+i-1)%#list)+1
         local id=list[idx].jobId
+
         if id~=JID and not isUsed(id, used) then
             return id
         end
@@ -106,6 +160,7 @@ end
 
 local function goNewServer()
     local id=getServer()
+
     if not id then
         print("❌ Nenhum servidor disponível")
         return
@@ -117,11 +172,16 @@ local function goNewServer()
     T:TeleportToPlaceInstance(tonumber(PID),id,P)
 end
 
+-- =========================
+-- DETECT MY ACCOUNTS
+-- =========================
 local function detectMyAccounts()
     task.wait(10)
 
     local accounts=loadAccounts()
+    local priority=loadPriority()
     local players=Players:GetPlayers()
+
     local myAccountsHere={}
 
     for _,plr in ipairs(players) do
@@ -135,23 +195,36 @@ local function detectMyAccounts()
         return false
     end
 
-    table.sort(myAccountsHere)
+    table.sort(myAccountsHere,function(a,b)
+        local pa=priority[a] or 999999
+        local pb=priority[b] or 999999
+
+        if pa==pb then
+            return a<b
+        end
+
+        return pa<pb
+    end)
 
     local keeper=myAccountsHere[1]
     local myName=P.Name
 
     if myName~=keeper then
-        print("⚠️ Outra conta minha detectada, vou trocar de servidor...")
+        print("⚠️ Outra conta minha detectada, prioridade menor, vou trocar de servidor...")
         return true
     else
-        print("✅ Sou a conta que vai ficar")
+        print("✅ Sou a conta de maior prioridade, vou ficar")
         return false
     end
 end
 
+-- =========================
+-- MAIN
+-- =========================
+
 -- Blue Lock:
 -- BananaHub faz o hop no fim da partida.
--- Nosso script só corrige colisão de contas.
+-- Nosso script só corrige colisão entre suas contas.
 if PID==BLUE_LOCK_ID then
     print("🔵 Modo Blue Lock ativo")
 
@@ -161,6 +234,7 @@ if PID==BLUE_LOCK_ID then
     end
 
     local needHop=detectMyAccounts()
+
     if needHop then
         goNewServer()
     else
