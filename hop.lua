@@ -16,9 +16,6 @@ local USED_FILE="used_servers.json"
 local STATE_FILE="hop_state.json"
 local PROTECT=180
 
--- =========================
--- FILE SYSTEM
--- =========================
 local function fexists(n)
     local ok=pcall(function() return readfile(n) end)
     return ok
@@ -40,9 +37,6 @@ local function jsave(n,d)
     end
 end
 
--- =========================
--- LOAD REMOTE DATA
--- =========================
 local function loadServers()
     local ok,r=pcall(function() return game:HttpGet(SERVERS_URL) end)
     if not ok then
@@ -91,9 +85,6 @@ local function loadPriority()
     return d
 end
 
--- =========================
--- ANTI LOOP
--- =========================
 local function justHoppedHere()
     local s=jload(STATE_FILE)
 
@@ -104,9 +95,6 @@ local function justHoppedHere()
     return (os.time()-s.last_hop_time)<=PROTECT
 end
 
--- =========================
--- SERVER CHOICE
--- =========================
 local function isUsed(id, used)
     for _,x in ipairs(used) do
         if x==id then
@@ -114,6 +102,20 @@ local function isUsed(id, used)
         end
     end
     return false
+end
+
+local function getQueueStartIndex(list, priority)
+    if #list == 0 then
+        return 1
+    end
+
+    local myPriority = priority[P.Name]
+
+    if myPriority and type(myPriority) == "number" then
+        return ((myPriority - 1) % #list) + 1
+    end
+
+    return ((P.UserId % #list) + 1)
 end
 
 local function getServer()
@@ -125,12 +127,13 @@ local function getServer()
     local list=all[PID]
     local usedData=jload(USED_FILE)
     local used=usedData[PID] or {}
+    local priority=loadPriority()
 
     if #list==0 then
         return nil
     end
 
-    local start=(P.UserId % #list)+1
+    local start=getQueueStartIndex(list, priority)
 
     for i=0,#list-1 do
         local idx=((start+i-1)%#list)+1
@@ -172,9 +175,6 @@ local function goNewServer()
     T:TeleportToPlaceInstance(tonumber(PID),id,P)
 end
 
--- =========================
--- DETECT MY ACCOUNTS
--- =========================
 local function detectMyAccounts()
     task.wait(10)
 
@@ -217,10 +217,6 @@ local function detectMyAccounts()
         return false
     end
 end
-
--- =========================
--- MAIN
--- =========================
 
 -- Blue Lock:
 -- BananaHub faz o hop no fim da partida.
