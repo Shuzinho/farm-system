@@ -15,9 +15,6 @@ local USED_FILE="used_servers.json"
 local STATE_FILE="hop_state.json"
 local PROTECT=180
 
--- =========================
--- FILE SYSTEM
--- =========================
 local function fexists(n)
     local ok=pcall(function() return readfile(n) end)
     return ok
@@ -39,9 +36,6 @@ local function jsave(n,d)
     end
 end
 
--- =========================
--- LOAD REMOTE DATA
--- =========================
 local function loadServers()
     local ok,r=pcall(function() return game:HttpGet(SERVERS_URL) end)
     if not ok then return nil end
@@ -58,9 +52,6 @@ local function loadAccounts()
     return d
 end
 
--- =========================
--- ANTI LOOP
--- =========================
 local function justHoppedHere()
     local s=jload(STATE_FILE)
     if not s.last_target_jobid then return false end
@@ -69,9 +60,6 @@ local function justHoppedHere()
     return (os.time()-s.last_hop_time)<=PROTECT
 end
 
--- =========================
--- SERVER CHOICE
--- =========================
 local function isUsed(id, used)
     for _,x in ipairs(used) do
         if x==id then return true end
@@ -129,9 +117,6 @@ local function goNewServer()
     T:TeleportToPlaceInstance(tonumber(PID),id,P)
 end
 
--- =========================
--- DETECT MY ACCOUNTS
--- =========================
 local function detectMyAccounts()
     task.wait(10)
 
@@ -164,13 +149,9 @@ local function detectMyAccounts()
     end
 end
 
--- =========================
--- MAIN
--- =========================
-
--- MODO BLUE LOCK:
--- BananaHub cuida do hop normal no fim da partida.
--- Nosso script só verifica duplicação de contas.
+-- Blue Lock:
+-- BananaHub faz o hop no fim da partida.
+-- Nosso script só corrige colisão de contas.
 if PID==BLUE_LOCK_ID then
     print("🔵 Modo Blue Lock ativo")
 
@@ -189,8 +170,7 @@ if PID==BLUE_LOCK_ID then
     return
 end
 
--- OUTROS JOGOS (ex: Blox Fruits):
--- segue comportamento normal de hop
+-- Outros jogos:
 if justHoppedHere() then
     print("⛔ Anti-loop ativo, ficando no servidor")
     return
