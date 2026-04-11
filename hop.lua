@@ -1,14 +1,21 @@
 local H=game:GetService("HttpService")
 local T=game:GetService("TeleportService")
 local P=game:GetService("Players").LocalPlayer
+local Players=game:GetService("Players")
 
 local PID=tostring(game.PlaceId)
 local JID=game.JobId
 
 local SERVERS_URL="https://raw.githubusercontent.com/Shuzinho/farm-system/main/servers.json"
+local ACCOUNTS_URL="https://raw.githubusercontent.com/Shuzinho/farm-system/main/accounts.json"
+
 local USED_FILE="used_servers.json"
 local STATE_FILE="hop_state.json"
 local PROTECT=180
+
+-- =========================
+-- FILE SYSTEM
+-- =========================
 
 local function fexists(n)
     local ok=pcall(function() return readfile(n) end)
@@ -31,6 +38,10 @@ local function jsave(n,d)
     end
 end
 
+-- =========================
+-- LOAD SERVERS
+-- =========================
+
 local function loadServers()
     local ok,r=pcall(function() return game:HttpGet(SERVERS_URL) end)
     if not ok then return nil end
@@ -39,6 +50,22 @@ local function loadServers()
     return d
 end
 
+-- =========================
+-- LOAD ACCOUNTS
+-- =========================
+
+local function loadAccounts()
+    local ok,r=pcall(function() return game:HttpGet(ACCOUNTS_URL) end)
+    if not ok then return {} end
+    local ok2,d=pcall(function() return H:JSONDecode(r) end)
+    if not ok2 then return {} end
+    return d
+end
+
+-- =========================
+-- ANTI LOOP
+-- =========================
+
 local function justHoppedHere()
     local s=jload(STATE_FILE)
     if not s.last_target_jobid then return false end
@@ -46,6 +73,10 @@ local function justHoppedHere()
     if not s.last_hop_time then return false end
     return (os.time()-s.last_hop_time)<=PROTECT
 end
+
+-- =========================
+-- SERVER LOGIC
+-- =========================
 
 local function isUsed(id, used)
     for _,x in ipairs(used) do
@@ -77,6 +108,10 @@ local function getServer()
     return nil
 end
 
+-- =========================
+-- MARK DATA
+-- =========================
+
 local function markUsed(id)
     local used=jload(USED_FILE)
     used[PID]=used[PID] or {}
@@ -91,15 +126,59 @@ local function markTarget(id)
     })
 end
 
+-- =========================
+-- DETECT ACCOUNTS
+-- =========================
+
+local function detectMyAccounts()
+    task.wait(10)
+
+    local accounts=loadAccounts()
+    local players=Players:GetPlayers()
+
+    local myAccountsHere={}
+
+    for _,plr in ipairs(players) do
+        if accounts[plr.Name] then
+            table.insert(myAccountsHere,plr.Name)
+        end
+    end
+
+    if #myAccountsHere>1 then
+        table.sort(myAccountsHere)
+
+        local keeper=myAccountsHere[1]
+        local myName=P.Name
+
+        if myName~=keeper then
+            print("⚠️ Conta duplicada detectada, trocando servidor...")
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/Shuzinho/farm-system/main/hop.lua"))()
+            return true
+        else
+            print("✅ Sou a conta que vai ficar")
+        end
+    end
+
+    return false
+end
+
+-- =========================
+-- MAIN
+-- =========================
+
 if justHoppedHere() then
-    return
+    print("⛔ Anti-loop ativo, ficando no servidor")
+else
+    local id=getServer()
+
+    if id then
+        print("🚀 Indo para novo servidor:",id)
+        markTarget(id)
+        markUsed(id)
+        T:TeleportToPlaceInstance(tonumber(PID),id,P)
+        return
+    end
 end
 
-local id=getServer()
-if not id then
-    return
-end
-
-markTarget(id)
-markUsed(id)
-T:TeleportToPlaceInstance(tonumber(PID),id,P)
+-- Depois que entrar, verifica duplicação
+detectMyAccounts()
