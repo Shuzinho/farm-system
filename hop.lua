@@ -6,6 +6,8 @@ local Players=game:GetService("Players")
 local PID=tostring(game.PlaceId)
 local JID=game.JobId
 
+local BLUE_LOCK_ID="18668065416"
+
 local SERVERS_URL="https://raw.githubusercontent.com/Shuzinho/farm-system/main/servers.json"
 local ACCOUNTS_URL="https://raw.githubusercontent.com/Shuzinho/farm-system/main/accounts.json"
 
@@ -16,7 +18,6 @@ local PROTECT=180
 -- =========================
 -- FILE SYSTEM
 -- =========================
-
 local function fexists(n)
     local ok=pcall(function() return readfile(n) end)
     return ok
@@ -39,9 +40,8 @@ local function jsave(n,d)
 end
 
 -- =========================
--- LOAD SERVERS
+-- LOAD REMOTE DATA
 -- =========================
-
 local function loadServers()
     local ok,r=pcall(function() return game:HttpGet(SERVERS_URL) end)
     if not ok then return nil end
@@ -49,10 +49,6 @@ local function loadServers()
     if not ok2 then return nil end
     return d
 end
-
--- =========================
--- LOAD ACCOUNTS
--- =========================
 
 local function loadAccounts()
     local ok,r=pcall(function() return game:HttpGet(ACCOUNTS_URL) end)
@@ -65,7 +61,6 @@ end
 -- =========================
 -- ANTI LOOP
 -- =========================
-
 local function justHoppedHere()
     local s=jload(STATE_FILE)
     if not s.last_target_jobid then return false end
@@ -75,9 +70,8 @@ local function justHoppedHere()
 end
 
 -- =========================
--- SERVER LOGIC
+-- SERVER CHOICE
 -- =========================
-
 local function isUsed(id, used)
     for _,x in ipairs(used) do
         if x==id then return true end
@@ -108,10 +102,6 @@ local function getServer()
     return nil
 end
 
--- =========================
--- MARK DATA
--- =========================
-
 local function markUsed(id)
     local used=jload(USED_FILE)
     used[PID]=used[PID] or {}
@@ -126,16 +116,27 @@ local function markTarget(id)
     })
 end
 
--- =========================
--- DETECT ACCOUNTS
--- =========================
+local function goNewServer()
+    local id=getServer()
+    if not id then
+        print("❌ Nenhum servidor disponível")
+        return
+    end
 
+    print("🚀 Indo para novo servidor:",id)
+    markTarget(id)
+    markUsed(id)
+    T:TeleportToPlaceInstance(tonumber(PID),id,P)
+end
+
+-- =========================
+-- DETECT MY ACCOUNTS
+-- =========================
 local function detectMyAccounts()
     task.wait(10)
 
     local accounts=loadAccounts()
     local players=Players:GetPlayers()
-
     local myAccountsHere={}
 
     for _,plr in ipairs(players) do
@@ -144,41 +145,55 @@ local function detectMyAccounts()
         end
     end
 
-    if #myAccountsHere>1 then
-        table.sort(myAccountsHere)
-
-        local keeper=myAccountsHere[1]
-        local myName=P.Name
-
-        if myName~=keeper then
-            print("⚠️ Conta duplicada detectada, trocando servidor...")
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/Shuzinho/farm-system/main/hop.lua"))()
-            return true
-        else
-            print("✅ Sou a conta que vai ficar")
-        end
+    if #myAccountsHere<=1 then
+        print("✅ Nenhuma conta duplicada aqui")
+        return false
     end
 
-    return false
+    table.sort(myAccountsHere)
+
+    local keeper=myAccountsHere[1]
+    local myName=P.Name
+
+    if myName~=keeper then
+        print("⚠️ Outra conta minha detectada, vou trocar de servidor...")
+        return true
+    else
+        print("✅ Sou a conta que vai ficar")
+        return false
+    end
 end
 
 -- =========================
 -- MAIN
 -- =========================
 
-if justHoppedHere() then
-    print("⛔ Anti-loop ativo, ficando no servidor")
-else
-    local id=getServer()
+-- MODO BLUE LOCK:
+-- BananaHub cuida do hop normal no fim da partida.
+-- Nosso script só verifica duplicação de contas.
+if PID==BLUE_LOCK_ID then
+    print("🔵 Modo Blue Lock ativo")
 
-    if id then
-        print("🚀 Indo para novo servidor:",id)
-        markTarget(id)
-        markUsed(id)
-        T:TeleportToPlaceInstance(tonumber(PID),id,P)
+    if justHoppedHere() then
+        print("⛔ Anti-loop ativo no Blue Lock")
         return
     end
+
+    local needHop=detectMyAccounts()
+    if needHop then
+        goNewServer()
+    else
+        print("✅ Ficando no servidor. BananaHub cuida do hop da partida.")
+    end
+
+    return
 end
 
--- Depois que entrar, verifica duplicação
-detectMyAccounts()
+-- OUTROS JOGOS (ex: Blox Fruits):
+-- segue comportamento normal de hop
+if justHoppedHere() then
+    print("⛔ Anti-loop ativo, ficando no servidor")
+    return
+end
+
+goNewServer()
