@@ -15,6 +15,7 @@ local PRIORITY_URL="https://raw.githubusercontent.com/Shuzinho/farm-system/main/
 local USED_FILE="used_servers.json"
 local STATE_FILE="hop_state.json"
 local PROTECT=180
+local MAX_TELEPORT_TRIES=8
 
 local function fexists(n)
     local ok=pcall(function() return readfile(n) end)
@@ -100,40 +101,6 @@ local function getQueueStartIndex(list, priority)
     return ((P.UserId % #list) + 1)
 end
 
-local function getServer()
-    local all=loadServers()
-    if not all or not all[PID] then
-        print("❌ Não achei a chave do place:", PID)
-        return nil,nil
-    end
-
-    local list=all[PID]
-    local usedData=jload(USED_FILE)
-    local used=usedData[PID] or {}
-    local priority=loadPriority()
-
-    print("📦 Servidores encontrados para esse place:", #list)
-
-    if #list==0 then
-        return nil,nil
-    end
-
-    local start=getQueueStartIndex(list, priority)
-
-    for i=0,#list-1 do
-        local idx=((start+i-1)%#list)+1
-        local server=list[idx]
-        local id=server.jobId
-        local game_id=server.game_id or tonumber(PID)
-
-        if id and tostring(game_id)==PID and id~=JID and not isUsed(id, used) then
-            return id,game_id
-        end
-    end
-
-    return nil,nil
-end
-
 local function markUsed(id)
     local used=jload(USED_FILE)
     used[PID]=used[PID] or {}
@@ -148,18 +115,94 @@ local function markTarget(id)
     })
 end
 
-local function goNewServer()
-    local id,game_id=getServer()
+local function getCandidateServers()
+    local all=loadServers()
+    if not all or not all[PID] then
+        print("❌ Não achei a chave do place:", PID)
+        return {}
+    end
 
-    if not id or not game_id then
+    local list=all[PID]
+    local usedData=jload(USED_FILE)
+    local used=usedData[PID] or {}
+    local priority=loadPriority()
+
+    print("📦 Servidores encontrados para esse place:", #list)
+
+    if #list == 0 then
+        return {}
+    end
+
+    local start=getQueueStartIndex(list, priority)
+    local candidates={}
+
+    for i=0,#list-1 do
+        local idx=((start+i-1)%#list)+1
+        local server=list[idx]
+        local id=server.jobId
+        local game_id=server.game_id or tonumber(PID)
+
+        if id and tostring(game_id)==PID and id~=JID and not isUsed(id, used) then
+            table.insert(candidates,{
+                jobId=id,
+                game_id=game_id
+            })
+        end
+    end
+
+    return candidates
+end
+
+local function tryTeleportLoop()
+    local candidates=getCandidateServers()
+
+    if #candidates == 0 then
         print("❌ Nenhum servidor disponível")
         return
     end
 
-    print("🚀 Indo para novo servidor:",id,"place:",game_id)
-    markTarget(id)
-    markUsed(id)
-    T:TeleportToPlaceInstance(tonumber(game_id),id,P)
+    local attempts=0
+    local currentTarget=nil
+
+    local connection
+    connection=T.TeleportInitFailed:Connect(function(player, result, errorMessage, placeId, teleportOptions)
+        print("❌ Teleporte falhou:", tostring(result), tostring(errorMessage))
+
+        if currentTarget then
+            markUsed(currentTarget.jobId)
+        end
+
+        attempts += 1
+        if attempts >= MAX_TELEPORT_TRIES then
+            print("❌ Máximo de tentativas atingido")
+            if connection then
+                connection:Disconnect()
+            end
+            return
+        end
+
+        local nextTarget=candidates[attempts + 1]
+        if not nextTarget then
+            print("❌ Acabaram os servidores candidatos")
+            if connection then
+                connection:Disconnect()
+            end
+            return
+        end
+
+        currentTarget=nextTarget
+        print("🔁 Tentando próximo servidor:", currentTarget.jobId, "place:", currentTarget.game_id)
+        markTarget(currentTarget.jobId)
+        markUsed(currentTarget.jobId)
+        task.wait(1)
+        T:TeleportToPlaceInstance(tonumber(currentTarget.game_id), currentTarget.jobId, P)
+    end)
+
+    currentTarget=candidates[1]
+    print("🚀 Indo para novo servidor:", currentTarget.jobId, "place:", currentTarget.game_id)
+    markTarget(currentTarget.jobId)
+    markUsed(currentTarget.jobId)
+    T:TeleportToPlaceInstance(tonumber(currentTarget.game_id), currentTarget.jobId, P)
 end
 
 local function detectMyAccounts()
@@ -215,7 +258,7 @@ if PID==BLUE_LOCK_ID then
     local needHop=detectMyAccounts()
 
     if needHop then
-        goNewServer()
+        tryTeleportLoop()
     else
         print("✅ Ficando no servidor. BananaHub cuida do hop da partida.")
     end
@@ -223,10 +266,10 @@ if PID==BLUE_LOCK_ID then
     return
 end
 
--- Outros jogos (Blox Fruits etc)
+-- Outros jogos
 if justHoppedHere() then
     print("⛔ Anti-loop ativo, ficando no servidor")
     return
 end
 
-goNewServer()
+tryTeleportLoop()
