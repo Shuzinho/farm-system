@@ -103,6 +103,7 @@ end
 local function getServer()
     local all=loadServers()
     if not all or not all[PID] then
+        print("❌ Não achei a chave do place:", PID)
         return nil,nil
     end
 
@@ -110,6 +111,8 @@ local function getServer()
     local usedData=jload(USED_FILE)
     local used=usedData[PID] or {}
     local priority=loadPriority()
+
+    print("📦 Servidores encontrados para esse place:", #list)
 
     if #list==0 then
         return nil,nil
@@ -123,8 +126,7 @@ local function getServer()
         local id=server.jobId
         local game_id=server.game_id or tonumber(PID)
 
-        -- segurança extra: só aceita servidor do place atual
-        if tostring(game_id)==PID and id~=JID and not isUsed(id, used) then
+        if id and tostring(game_id)==PID and id~=JID and not isUsed(id, used) then
             return id,game_id
         end
     end
@@ -201,6 +203,7 @@ local function detectMyAccounts()
     end
 end
 
+-- Blue Lock: BananaHub cuida do hop no fim da partida.
 if PID==BLUE_LOCK_ID then
     print("🔵 Modo Blue Lock ativo")
 
@@ -220,6 +223,7 @@ if PID==BLUE_LOCK_ID then
     return
 end
 
+-- Outros jogos (Blox Fruits etc)
 if justHoppedHere() then
     print("⛔ Anti-loop ativo, ficando no servidor")
     return
