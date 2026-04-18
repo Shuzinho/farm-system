@@ -55,43 +55,25 @@ end
 
 local function loadAccounts()
     local ok,r=pcall(function() return game:HttpGet(ACCOUNTS_URL) end)
-    if not ok then
-        warn("Erro ao carregar accounts.json")
-        return {}
-    end
-
+    if not ok then return {} end
     local ok2,d=pcall(function() return H:JSONDecode(r) end)
-    if not ok2 then
-        warn("JSON inválido em accounts.json")
-        return {}
-    end
-
+    if not ok2 then return {} end
     return d
 end
 
 local function loadPriority()
     local ok,r=pcall(function() return game:HttpGet(PRIORITY_URL) end)
-    if not ok then
-        warn("Erro ao carregar accounts_priority.json")
-        return {}
-    end
-
+    if not ok then return {} end
     local ok2,d=pcall(function() return H:JSONDecode(r) end)
-    if not ok2 then
-        warn("JSON inválido em accounts_priority.json")
-        return {}
-    end
-
+    if not ok2 then return {} end
     return d
 end
 
 local function justHoppedHere()
     local s=jload(STATE_FILE)
-
     if not s.last_target_jobid then return false end
     if s.last_target_jobid~=JID then return false end
     if not s.last_hop_time then return false end
-
     return (os.time()-s.last_hop_time)<=PROTECT
 end
 
@@ -121,7 +103,7 @@ end
 local function getServer()
     local all=loadServers()
     if not all or not all[PID] then
-        return nil
+        return nil,nil
     end
 
     local list=all[PID]
@@ -130,21 +112,24 @@ local function getServer()
     local priority=loadPriority()
 
     if #list==0 then
-        return nil
+        return nil,nil
     end
 
     local start=getQueueStartIndex(list, priority)
 
     for i=0,#list-1 do
         local idx=((start+i-1)%#list)+1
-        local id=list[idx].jobId
+        local server=list[idx]
+        local id=server.jobId
+        local game_id=server.game_id or tonumber(PID)
 
-        if id~=JID and not isUsed(id, used) then
-            return id
+        -- segurança extra: só aceita servidor do place atual
+        if tostring(game_id)==PID and id~=JID and not isUsed(id, used) then
+            return id,game_id
         end
     end
 
-    return nil
+    return nil,nil
 end
 
 local function markUsed(id)
@@ -162,17 +147,17 @@ local function markTarget(id)
 end
 
 local function goNewServer()
-    local id=getServer()
+    local id,game_id=getServer()
 
-    if not id then
+    if not id or not game_id then
         print("❌ Nenhum servidor disponível")
         return
     end
 
-    print("🚀 Indo para novo servidor:",id)
+    print("🚀 Indo para novo servidor:",id,"place:",game_id)
     markTarget(id)
     markUsed(id)
-    T:TeleportToPlaceInstance(tonumber(PID),id,P)
+    T:TeleportToPlaceInstance(tonumber(game_id),id,P)
 end
 
 local function detectMyAccounts()
@@ -198,11 +183,9 @@ local function detectMyAccounts()
     table.sort(myAccountsHere,function(a,b)
         local pa=priority[a] or 999999
         local pb=priority[b] or 999999
-
         if pa==pb then
             return a<b
         end
-
         return pa<pb
     end)
 
@@ -218,9 +201,6 @@ local function detectMyAccounts()
     end
 end
 
--- Blue Lock:
--- BananaHub faz o hop no fim da partida.
--- Nosso script só corrige colisão entre suas contas.
 if PID==BLUE_LOCK_ID then
     print("🔵 Modo Blue Lock ativo")
 
@@ -240,7 +220,6 @@ if PID==BLUE_LOCK_ID then
     return
 end
 
--- Outros jogos:
 if justHoppedHere() then
     print("⛔ Anti-loop ativo, ficando no servidor")
     return
