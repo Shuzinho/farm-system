@@ -1,238 +1,416 @@
-local H=game:GetService("HttpService")
-local T=game:GetService("TeleportService")
-local P=game:GetService("Players").LocalPlayer
-local Players=game:GetService("Players")
+-- Configurações GitHub
+local SERVERS_URL = "https://raw.githubusercontent.com/Shuzinho/farm-system/main/servers.json"
+local ACCOUNTS_URL = "https://raw.githubusercontent.com/Shuzinho/farm-system/main/accounts.json"
 
-local PID=tostring(game.PlaceId)
-local JID=game.JobId
+-- Configurações locais
+local PLACE_ID = tostring(game.PlaceId)
+local PLAYER_ID = tostring(game:GetService("Players").LocalPlayer.UserId)
+local PLAYER_NAME = game:GetService("Players").LocalPlayer.Name
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local BLUE_LOCK_ID="18668065416"
+-- Arquivos locais (backup/fallback)
+local USED_FILE = "used_servers.json"
+local STATE_FILE = "hop_state.json"
+local PROTECT = 180
 
-local SERVERS_URL="https://raw.githubusercontent.com/Shuzinho/farm-system/main/servers.json"
-local ACCOUNTS_URL="https://raw.githubusercontent.com/Shuzinho/farm-system/main/accounts.json"
-
--- Mapeamento: PlaceId -> game_id (para Blox Fruits)
-local PLACE_TO_GAME={
-    ["100117331123089"]="2753915549",  -- Sea 1
-    ["14931379967"]="4442272183",     -- Sea 2
-    ["7449423635"]="7449423635"       -- Sea 3 (place_id == game_id)
-}
-
--- Converter PlaceId para game_id se necessário
-local GAME_ID=PLACE_TO_GAME[PID] or PID
-
-print(" Hop Script iniciado")
-print("   PlaceId:",PID)
-print("   Game_ID:",GAME_ID)
-
-local USED_FILE="used_servers.json"
-local STATE_FILE="hop_state.json"
-local PROTECT=180
-
--- CACHE: Reduz requisições HTTP
-local CACHE_DURATION=30  -- Segundos
-local servers_cache=nil
-local accounts_cache=nil
-local last_servers_fetch=0
-local last_accounts_fetch=0
-
+-- Funções utilitárias
 local function fexists(n)
-    local ok=pcall(function() return readfile(n) end)
+    local ok = pcall(function() return readfile(n) end)
     return ok
 end
 
 local function jload(n)
     if not readfile or not writefile then return {} end
     if not fexists(n) then
-        writefile(n,"{}")
+        writefile(n, "{}")
         return {}
     end
-    local ok,d=pcall(function() return H:JSONDecode(readfile(n)) end)
-    return ok and type(d)=="table" and d or {}
+    local ok, d = pcall(function() return HttpService:JSONDecode(readfile(n)) end)
+    return ok and type(d) == "table" and d or {}
 end
 
-local function jsave(n,d)
+local function jsave(n, d)
     if writefile then
-        writefile(n,H:JSONEncode(d))
+        writefile(n, HttpService:JSONEncode(d))
     end
 end
 
+-- CARREGA DO GITHUB (funciona em PC e Mobile)
 local function loadServers()
-    local now=os.time()
-    
-    -- Usa cache se válido
-    if servers_cache and (now-last_servers_fetch)<CACHE_DURATION then
-        return servers_cache
+    print("☁️ Carregando servidores do GitHub...")
+    local ok, r = pcall(function() return game:HttpGet(SERVERS_URL) end)
+    if not ok then
+        print("❌ Erro ao carregar do GitHub:", r)
+        print("🔄 Tentando arquivo local...")
+        -- Fallback para arquivo local
+        local localData = jload("servers.json")
+        return localData[PLACE_ID] and {[PLACE_ID] = localData[PLACE_ID]} or nil
     end
-    
-    local ok,r=pcall(function() return game:HttpGet(SERVERS_URL) end)
-    if not ok then 
-        print("❌ Erro ao carregar servidores:",r)
-        return servers_cache  -- Retorna cache antigo
+    local ok2, d = pcall(function() return HttpService:JSONDecode(r) end)
+    if not ok2 then
+        print("❌ Erro ao decodificar JSON do GitHub:", d)
+        return nil
     end
-    local ok2,d=pcall(function() return H:JSONDecode(r) end)
-    if not ok2 then 
-        print("❌ Erro ao decodificar servidores")
-        return servers_cache
-    end
-    
-    -- Atualiza cache
-    servers_cache=d
-    last_servers_fetch=now
-    print("✅ Servidores atualizados (cache)")
+    print("✅ Servidores carregados do GitHub!")
     return d
 end
 
 local function loadAccounts()
-    local now=os.time()
-    
-    -- Usa cache se válido
-    if accounts_cache and (now-last_accounts_fetch)<CACHE_DURATION then
-        return accounts_cache
+    print("☁️ Carregando contas do GitHub...")
+    local ok, r = pcall(function() return game:HttpGet(ACCOUNTS_URL) end)
+    if not ok then
+        print("❌ Erro ao carregar contas:", r)
+        return {}
     end
-    
-    local ok,r=pcall(function() return game:HttpGet(ACCOUNTS_URL) end)
-    if not ok then 
-        print("❌ Erro ao carregar contas:",r)
-        return accounts_cache or {}
+    local ok2, d = pcall(function() return HttpService:JSONDecode(r) end)
+    if not ok2 then
+        print("❌ Erro ao decodificar contas:", d)
+        return {}
     end
-    local ok2,d=pcall(function() return H:JSONDecode(r) end)
-    if not ok2 then 
-        print("❌ Erro ao decodificar contas")
-        return accounts_cache or {}
-    end
-    
-    -- Atualiza cache
-    accounts_cache=d
-    last_accounts_fetch=now
     return d
 end
 
+-- Sistema de controle
 local function justHoppedHere()
-    local s=jload(STATE_FILE)
+    local s = jload(STATE_FILE)
     if not s.last_target_jobid then return false end
-    if s.last_target_jobid~=JID then return false end
+    if s.last_target_jobid ~= game.JobId then return false end
     if not s.last_hop_time then return false end
-    return (os.time()-s.last_hop_time)<=PROTECT
+    return (os.time() - s.last_hop_time) <= PROTECT
 end
 
 local function isUsed(id, used)
-    for _,x in ipairs(used) do
-        if x==id then return true end
+    for _, x in ipairs(used) do
+        if x == id then return true end
     end
     return false
 end
 
+local function markUsed(id)
+    local used = jload(USED_FILE)
+    used[PLACE_ID] = used[PLACE_ID] or {}
+    table.insert(used[PLACE_ID], id)
+    jsave(USED_FILE, used)
+end
+
+local function removeUsed(id)
+    local used = jload(USED_FILE)
+    if used[PLACE_ID] then
+        for i, v in ipairs(used[PLACE_ID]) do
+            if v == id then
+                table.remove(used[PLACE_ID], i)
+                break
+            end
+        end
+        jsave(USED_FILE, used)
+    end
+end
+
+local function markTarget(id)
+    jsave(STATE_FILE, {
+        last_target_jobid = id,
+        last_hop_time = os.time()
+    })
+end
+
+-- Pega servidor disponível do GitHub
 local function getServer()
-    local all=loadServers()
-    if not all or not all[GAME_ID] then
-        print("❌ Nenhum servidor para game_id:",GAME_ID,"(PlaceId:",PID,")")
+    local all = loadServers()
+    if not all or not all[PLACE_ID] then
+        print("❌ Nenhum servidor disponível para este jogo no GitHub")
         return nil
     end
 
-    local list=all[GAME_ID]
-    local usedData=jload(USED_FILE)
-    local used=usedData[GAME_ID] or {}
+    local list = all[PLACE_ID]
+    local usedData = jload(USED_FILE)
+    local used = usedData[PLACE_ID] or {}
 
-    if #list==0 then return nil end
+    if #list == 0 then
+        print("❌ Lista de servidores vazia")
+        return nil
+    end
 
-    local start=(P.UserId % #list)+1
+    -- Ordena por players (menor para maior)
+    table.sort(list, function(a, b)
+        return (a.players or 0) < (b.players or 0)
+    end)
 
-    for i=0,#list-1 do
-        local idx=((start+i-1)%#list)+1
-        local id=list[idx].jobId
-        if id~=JID and not isUsed(id, used) then
-            return id
+    for _, server in ipairs(list) do
+        local id = server.jobId
+        if id ~= game.JobId and not isUsed(id, used) then
+            return server
+        end
+    end
+
+    -- Se todos foram usados, limpa a lista
+    print("🔄 Todos os servidores foram usados, limpando lista...")
+    usedData[PLACE_ID] = {}
+    jsave(USED_FILE, usedData)
+
+    -- Tenta novamente
+    for _, server in ipairs(list) do
+        local id = server.jobId
+        if id ~= game.JobId then
+            return server
         end
     end
 
     return nil
 end
 
-local function markUsed(id)
-    local used=jload(USED_FILE)
-    used[GAME_ID]=used[GAME_ID] or {}
-    table.insert(used[GAME_ID],id)
-    jsave(USED_FILE,used)
-end
-
-local function markTarget(id)
-    jsave(STATE_FILE,{
-        last_target_jobid=id,
-        last_hop_time=os.time()
-    })
-end
-
-local function goNewServer()
-    local id=getServer()
-    if not id then
-        print("❌ Nenhum servidor disponível")
-        return
+-- SISTEMA DE TELEPORTE UNIVERSAL (funciona em QUALQUER jogo)
+local function teleportToServer(server)
+    if not server or not server.jobId then
+        print("❌ Servidor inválido")
+        return false
     end
 
-    print("🚀 Indo para novo servidor:",id)
-    markTarget(id)
-    markUsed(id)
-    T:TeleportToPlaceInstance(tonumber(PID),id,P)
-end
+    local serverId = server.jobId
+    local player = Players.LocalPlayer
+    
+    print("🚀 Teleportando para:", serverId, "(" .. (server.players or "?") .. " jogadores)")
+    markTarget(serverId)
+    markUsed(serverId)
 
-local function detectMyAccounts()
-    task.wait(10)
+    -- ========== MÉTODO 1: ServerBrowser (Blox Fruits e jogos específicos) ==========
+    print("📡 Método 1: ServerBrowser...")
+    local serverBrowser = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+    if serverBrowser then
+        local success, err = pcall(function()
+            serverBrowser:InvokeServer("teleport", serverId)
+        end)
+        if success then
+            print("✅ Teleporte iniciado (ServerBrowser)")
+            return true
+        else
+            print("❌ ServerBrowser falhou:", tostring(err))
+        end
+    else
+        print("⚠️ ServerBrowser não disponível")
+    end
 
-    local accounts=loadAccounts()
-    local players=Players:GetPlayers()
-    local myAccountsHere={}
-
-    for _,plr in ipairs(players) do
-        if accounts[plr.Name] then
-            table.insert(myAccountsHere,plr.Name)
+    -- ========== MÉTODO 2: TeleportService padrão ==========
+    print("📡 Método 2: TeleportService...")
+    local success2, err2 = pcall(function()
+        TeleportService:TeleportToPlaceInstance(tonumber(PLACE_ID), serverId, player)
+    end)
+    
+    if success2 then
+        print("✅ Teleporte iniciado (TeleportService)")
+        return true
+    else
+        print("❌ TeleportService falhou:", tostring(err2))
+        
+        -- Verifica se é erro de token
+        local errStr = tostring(err2):lower()
+        if errStr:find("teleport token") or errStr:find("unauthorized") or errStr:find("773") then
+            print("⚠️ Erro de token detectado! Aplicando correções...")
+            
+            -- ========== MÉTODO 3: Aguardar e tentar novamente ==========
+            print("⏳ Aguardando 3 segundos para renovar token...")
+            task.wait(3)
+            
+            print("📡 Método 3: Retry com token renovado...")
+            local success3, err3 = pcall(function()
+                TeleportService:TeleportToPlaceInstance(tonumber(PLACE_ID), serverId, player)
+            end)
+            
+            if success3 then
+                print("✅ Teleporte iniciado (Retry)")
+                return true
+            else
+                print("❌ Retry falhou:", tostring(err3))
+                
+                -- ========== MÉTODO 4: Respawn para novo token ==========
+                print("📡 Método 4: Respawn para novo token...")
+                if player.Character and player.Character:FindFirstChild("Humanoid") then
+                    player.Character:BreakJoints()
+                    print("💀 Aguardando respawn...")
+                    task.wait(3)
+                    
+                    -- Espera personagem carregar
+                    local waited = 0
+                    repeat
+                        task.wait(1)
+                        waited = waited + 1
+                    until (player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0) or waited > 10
+                    
+                    if waited <= 10 then
+                        task.wait(1)
+                        local success4, err4 = pcall(function()
+                            TeleportService:TeleportToPlaceInstance(tonumber(PLACE_ID), serverId, player)
+                        end)
+                        
+                        if success4 then
+                            print("✅ Teleporte iniciado (Respawn)")
+                            return true
+                        else
+                            print("❌ Respawn falhou:", tostring(err4))
+                        end
+                    else
+                        print("⚠️ Timeout no respawn")
+                    end
+                end
+            end
         end
     end
 
-    if #myAccountsHere<=1 then
-        print("✅ Nenhuma conta duplicada aqui")
-        return false
+    print("💥 Todos os métodos falharam!")
+    removeUsed(serverId)
+    return false
+end
+
+-- Verifica se precisa trocar de servidor
+local function checkNeedHop()
+    local accounts = loadAccounts()
+    local playersHere = Players:GetPlayers()
+    local myAccountsHere = {}
+
+    -- Verifica contas no mesmo servidor
+    for _, plr in ipairs(playersHere) do
+        if accounts[plr.Name] then
+            table.insert(myAccountsHere, plr.Name)
+        end
     end
 
-    table.sort(myAccountsHere)
-
-    local keeper=myAccountsHere[1]
-    local myName=P.Name
-
-    if myName~=keeper then
-        print("⚠️ Outra conta minha detectada, vou trocar de servidor...")
+    -- Verifica limite de jogadores
+    if #playersHere > 12 then
+        print("⚠️ Servidor tem " .. #playersHere .. " jogadores! (Limite é 12)")
         return true
-    else
-        print("✅ Sou a conta que vai ficar")
-        return false
+    end
+
+    -- Verifica contas duplicadas
+    if #myAccountsHere >= 2 then
+        table.sort(myAccountsHere)
+        local keeper = myAccountsHere[1]
+
+        if PLAYER_NAME ~= keeper then
+            print("⚠️ Outra conta minha detectada (" .. keeper .. "), vou trocar...")
+            return true
+        else
+            print("✅ Sou a conta que vai ficar (" .. PLAYER_NAME .. ")")
+            return false
+        end
+    end
+
+    return false
+end
+
+-- Monitoramento principal
+local function monitor()
+    print("🤖 Iniciando monitoramento...")
+    
+    local failedTeleports = 0
+    local maxFailedAttempts = 5
+    local lastServerId = game.JobId
+
+    while true do
+        task.wait(5)
+
+        -- Verifica se teleporte foi confirmado
+        if game.JobId ~= lastServerId then
+            print("✅ Teleporte confirmado! Novo servidor:", game.JobId)
+            failedTeleports = 0
+            lastServerId = game.JobId
+        end
+
+        -- Verifica se precisa trocar
+        if checkNeedHop() then
+            print("🔄 Procurando novo servidor...")
+
+            -- Tenta até 3 servidores diferentes
+            local tried = 0
+            local maxTry = 3
+            local success = false
+
+            while tried < maxTry and not success do
+                local server = getServer()
+                if not server then
+                    print("❌ Nenhum servidor disponível")
+                    break
+                end
+
+                tried = tried + 1
+                print("🎯 Tentativa " .. tried .. "/" .. maxTry .. ":", server.jobId)
+
+                success = teleportToServer(server)
+
+                if success then
+                    failedTeleports = 0
+                    print("⏳ Aguardando confirmação...")
+                    task.wait(8)
+                    break
+                else
+                    removeUsed(server.jobId)
+                    print("🗑️ Servidor removido, tentando próximo...")
+                    task.wait(3)
+                end
+            end
+
+            if not success then
+                failedTeleports = failedTeleports + 1
+                print("❌ Falhou " .. failedTeleports .. "/" .. maxFailedAttempts .. " vezes")
+
+                if failedTeleports >= maxFailedAttempts then
+                    print("💤 Muitas falhas, aguardando 60 segundos...")
+                    task.wait(60)
+                    failedTeleports = 0
+                else
+                    task.wait(10)
+                end
+            end
+        end
     end
 end
 
--- Blue Lock:
--- BananaHub faz o hop no fim da partida.
--- Nosso script só corrige colisão de contas.
-if PID==BLUE_LOCK_ID then
-    print("🔵 Modo Blue Lock ativo")
-
-    if justHoppedHere() then
-        print("⛔ Anti-loop ativo no Blue Lock")
-        return
+-- Handler para falhas assíncronas
+TeleportService.TeleportInitFailed:Connect(function(player, resultEnum, errorMessage, placeId, instanceId)
+    if player ~= Players.LocalPlayer then return end
+    print("❌ Teleporte falhou (assíncrono):", tostring(resultEnum), tostring(errorMessage))
+    if instanceId then
+        removeUsed(instanceId)
+        print("🗑️ Removido:", instanceId)
     end
+end)
 
-    local needHop=detectMyAccounts()
-    if needHop then
-        goNewServer()
-    else
-        print("✅ Ficando no servidor. BananaHub cuida do hop da partida.")
-    end
+-- Inicialização
+print("=" .. string.rep("=", 50) .. "=")
+print("🤖 SISTEMA DE HOP - GITHUB UNIVERSAL")
+print("=" .. string.rep("=", 50) .. "=")
+print("🎮 Place ID:", PLACE_ID)
+print("👤 Player:", PLAYER_NAME)
+print("🆔 Servidor:", game.JobId)
+print("-" .. string.rep("-", 50) .. "-")
 
-    return
+-- Carrega dados
+local servers = loadServers()
+local accounts = loadAccounts()
+
+if servers and servers[PLACE_ID] then
+    print("📊 Servidores:", #servers[PLACE_ID])
+else
+    print("⚠️ Sem servidores para este jogo!")
 end
 
--- Outros jogos:
+if accounts then
+    local total = 0
+    for _ in pairs(accounts) do total = total + 1 end
+    print("📊 Contas:", total)
+end
+
+print("-" .. string.rep("-", 50) .. "-")
+
+-- Anti-loop
 if justHoppedHere() then
-    print("⛔ Anti-loop ativo, ficando no servidor")
-    return
+    print("⛔ Anti-loop ativo...")
+    task.wait(PROTECT)
 end
 
-goNewServer()
+-- Inicia
+print("🚀 Iniciando em 3 segundos...")
+task.wait(3)
+task.spawn(monitor)
+print("✅ Sistema ativo!")
