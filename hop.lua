@@ -1,3 +1,5 @@
+task.wait(5)
+
 -- Configurações GitHub
 local SERVERS_URL = "https://raw.githubusercontent.com/Shuzinho/farm-system/main/servers.json"
 local ACCOUNTS_URL = "https://raw.githubusercontent.com/Shuzinho/farm-system/main/accounts.json"
@@ -15,6 +17,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local USED_FILE = "used_servers.json"
 local STATE_FILE = "hop_state.json"
 local PROTECT = 180
+
+-- CACHE: Evita requisições HTTP excessivas
+local CACHE_DURATION = 120  -- AUMENTADO: 120s (2min) para economizar banda com muitos Roblox
+local servers_cache = nil
+local accounts_cache = nil
+local last_servers_fetch = 0
+local last_accounts_fetch = 0
 
 -- Funções utilitárias
 local function fexists(n)
@@ -38,38 +47,64 @@ local function jsave(n, d)
     end
 end
 
--- CARREGA DO GITHUB (funciona em PC e Mobile)
+-- CARREGA DO GITHUB com CACHE (reduz requisições)
 local function loadServers()
+    local now = os.time()
+    
+    -- Retorna cache se ainda válido
+    if servers_cache and (now - last_servers_fetch) < CACHE_DURATION then
+        return servers_cache
+    end
+    
     print("☁️ Carregando servidores do GitHub...")
     local ok, r = pcall(function() return game:HttpGet(SERVERS_URL) end)
     if not ok then
         print("❌ Erro ao carregar do GitHub:", r)
+        -- Fallback: retorna cache antigo se existir
+        if servers_cache then
+            print("🔄 Usando cache antigo...")
+            return servers_cache
+        end
         print("🔄 Tentando arquivo local...")
-        -- Fallback para arquivo local
         local localData = jload("servers.json")
         return localData[PLACE_ID] and {[PLACE_ID] = localData[PLACE_ID]} or nil
     end
     local ok2, d = pcall(function() return HttpService:JSONDecode(r) end)
     if not ok2 then
         print("❌ Erro ao decodificar JSON do GitHub:", d)
-        return nil
+        return servers_cache  -- Retorna cache se falhar
     end
+    
+    -- Atualiza cache
+    servers_cache = d
+    last_servers_fetch = now
     print("✅ Servidores carregados do GitHub!")
     return d
 end
 
 local function loadAccounts()
+    local now = os.time()
+    
+    -- Retorna cache se ainda válido
+    if accounts_cache and (now - last_accounts_fetch) < CACHE_DURATION then
+        return accounts_cache
+    end
+    
     print("☁️ Carregando contas do GitHub...")
     local ok, r = pcall(function() return game:HttpGet(ACCOUNTS_URL) end)
     if not ok then
         print("❌ Erro ao carregar contas:", r)
-        return {}
+        return accounts_cache or {}  -- Retorna cache ou vazio
     end
     local ok2, d = pcall(function() return HttpService:JSONDecode(r) end)
     if not ok2 then
         print("❌ Erro ao decodificar contas:", d)
-        return {}
+        return accounts_cache or {}
     end
+    
+    -- Atualiza cache
+    accounts_cache = d
+    last_accounts_fetch = now
     return d
 end
 
@@ -306,9 +341,17 @@ local function monitor()
     local failedTeleports = 0
     local maxFailedAttempts = 5
     local lastServerId = game.JobId
+    local lastCheckTime = 0
+    local CHECK_DELAY = 10  -- Segundos entre verificações (reduzido de 5s)
 
     while true do
-        task.wait(5)
+        task.wait(CHECK_DELAY)
+        
+        -- Força refresh do cache a cada 5 minutos (mais conservador)
+        local now = os.time()
+        if (now - last_servers_fetch) >= 300 then
+            servers_cache = nil  -- Invalida cache
+        end
 
         -- Verifica se teleporte foi confirmado
         if game.JobId ~= lastServerId then
