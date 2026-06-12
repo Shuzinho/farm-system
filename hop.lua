@@ -1,8 +1,8 @@
 task.wait(5)
 
 -- Configurações GitHub
-local SERVERS_URL = "https://raw.githubusercontent.com/Shuzinho/farm-system/main/servers.json"
-local ACCOUNTS_URL = "https://raw.githubusercontent.com/Shuzinho/farm-system/main/accounts.json"
+local SERVERS_URL = "https://raw.githubusercontent.com/Shuzinho/farm-system/refs/heads/main/servers.json"
+local ACCOUNTS_URL = "https://raw.githubusercontent.com/Shuzinho/farm-system/refs/heads/main/accounts.json"
 
 -- Configurações locais
 local PLACE_ID = tostring(game.PlaceId)
