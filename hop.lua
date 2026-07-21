@@ -453,8 +453,10 @@ if justHoppedHere() then
 end
 
 -- BLUE LOCK: Só corrige colisão de contas, o resto fica pro BananaHub
-local BLUE_LOCK_ID = "18668065416"
-if PLACE_ID == BLUE_LOCK_ID then
+local BLUE_LOCK_LOBBY_ID = "18668065416"
+local BLUE_LOCK_MATCH_ID = "115110570222234"
+
+if PLACE_ID == BLUE_LOCK_LOBBY_ID or PLACE_ID == BLUE_LOCK_MATCH_ID then
     print("🔵 Modo Blue Lock ativo!")
     print("   BananaHub cuida do hop da partida.")
     print("   Nosso script só evita contas duplicadas.")
