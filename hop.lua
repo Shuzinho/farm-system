@@ -1,3 +1,5 @@
+task.wait(5)
+
 -- Configurações GitHub
 local SERVERS_URL = "https://raw.githubusercontent.com/Shuzinho/farm-system/refs/heads/main/servers.json"
 local ACCOUNTS_URL = "https://raw.githubusercontent.com/Shuzinho/farm-system/refs/heads/main/accounts.json"
